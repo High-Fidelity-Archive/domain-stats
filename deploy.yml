@@ -1,0 +1,31 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: domain-stats-pusher
+  labels:
+    io.kompose.service: domain-stats-pusher
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        io.kompose.service: domain-stats-pusher
+    spec:
+      containers:
+      - name: domain-stats-pusher
+        image: highfidelity/domain-stats:5
+        env:
+          - name: HIFI_DS_WEB_SESSION_UUID
+            valueFrom:
+              secretKeyRef:
+                name: domainpushersecret
+                key: dswebsessionuuid
+          - name: HIFI_SLEEP_INTERVAL
+            value: '3'
+          - name: HIFI_DOMAIN_NAME
+            value: distributed2
+          - name: HIFI_INFLUX_HOST
+            value: 172.20.255.253
+      restartPolicy: Always
