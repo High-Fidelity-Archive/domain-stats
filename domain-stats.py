@@ -214,11 +214,10 @@ if __name__ == '__main__':
     while 1:
         logger.debug("starting loop")
         ts = time.time()
-        try:
-            logger.debug("write stats")
-            write_stats(request, client_kwargs)
-        except Exception as exp:
-            logger.exception("couldn't write stats")
+
+        logger.debug("write stats")
+        write_stats(request, client_kwargs)
+
         sleep_for = sleep_interval - (time.time() - ts)
         logger.info("sleeping for %.02f secs" % sleep_for)
         time.sleep(max(sleep_for, 0))
