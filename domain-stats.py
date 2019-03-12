@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+import urllib
+import urlparse
 
 import requests
 from influxdb import InfluxDBClient
@@ -12,16 +14,85 @@ from influxdb import InfluxDBClient
 logger = logging.getLogger("domain_stats")
 
 
+class MetaverseAuth:
+    METAVERSE_URL = "https://metaverse.highfidelity.com/oauth"
+    TOKEN_URL = "%s/token" % METAVERSE_URL
+    AUTHORIZE_URL = "%s/authorize" % METAVERSE_URL
+
+    def __init__(self, username, password):
+        self._cookies = {}
+        self._tokens = self._get_access_token(username=username,
+                                              password=password)
+
+    # Call once when initialized
+    def _get_access_token(self, username=None, password=None):
+        if username and password:
+            resp = requests.post(
+                    self.TOKEN_URL,
+                    data={
+                        "grant_type": "password",
+                        "scope": "owner",
+                        "username": username,
+                        "password": password,
+                    },
+                    )
+            tokens = resp.json()
+            assert "access_token" in tokens
+            return tokens
+
+    def _get_cookies(self, domain, port):
+        k = (domain, port)
+        if k in self._cookies:
+            return self._cookies[k]
+
+        # This request is meant to redirect through the metaverse and
+        # back to the domain server. If we followed the redirect it
+        # would fail because it's missing the access token. A valid
+        # request needs the client_id, state, and access_token. We have
+        # to make an intial request to grab the state and client_id, but
+        # we don't follow the redirect because it will fail until we add
+        # the access token.
+        domain_tls_url = "https://%s:%d" % (domain, int(port) + 1)
+        domain_url = "http://%s:%d" % (domain, port)
+        redirect_resp = requests.get(domain_url, allow_redirects=False)
+        location = urlparse.urlparse(redirect_resp.headers["Location"])
+        query = urlparse.parse_qs(location.query)
+        params = {
+            "client_id": query["client_id"][0],
+            "response_type": "code",
+            "state": query["state"][0],
+            "redirect_uri": "%s/oauth" % domain_tls_url,
+        }
+        oauth_url = "%s?%s" % (self.AUTHORIZE_URL, urllib.urlencode(params))
+
+        # Make the initial authorization request and steal its cookies.
+        session = requests.Session()
+        headers = {"Authorization": "Bearer %s" % self._tokens["access_token"]}
+        session.get(oauth_url, headers=headers, verify=False)
+        cookies = session.cookies.get_dict()
+
+        self._cookies[k] = cookies
+
+        return cookies
+
+    def __call__(self, request):
+        url = urlparse.urlparse(request.url)
+        cookies = self._get_cookies(url.hostname, url.port)
+        cookies_str = "; ".join(("%s=%s" % (k, v) for k, v in cookies.items()))
+        request.headers.update({"Cookie": cookies_str})
+        return request
+
+
 class DomainRequester:
-    def __init__(self, hostname, cookies=None):
+    def __init__(self, hostname, auth):
         self.hostname = hostname
-        self.cookies = cookies or {}
+        self.auth = auth
 
     def get(self, path):
         base_url = 'http://%s:40100' % self.hostname
         path = re.sub(r'^/+', '', path)
         url = '/'.join((base_url, path))
-        response = requests.get(url, cookies=self.cookies)
+        response = requests.get(url, auth=self.auth)
         return response.json()
 
     def __call__(self, path):
@@ -118,7 +189,6 @@ if __name__ == '__main__':
 
     domain_name = os.environ.get('HIFI_DOMAIN_NAME')
     sleep_interval = int(os.environ.get('HIFI_SLEEP_INTERVAL', 3))
-    ds_web_session_uuid = os.environ.get('HIFI_DS_WEB_SESSION_UUID')
     client_kwargs = {
         'host': os.environ.get('HIFI_INFLUX_HOST', 'localhost'),
         'port': int(os.environ.get('HIFI_INFLUX_PORT', '8086')),
@@ -136,7 +206,8 @@ if __name__ == '__main__':
     logger.debug("creating request")
     request = DomainRequester(
         '%s.highfidelity.io' % domain_name,
-        cookies={'DS_WEB_SESSION_UUID': ds_web_session_uuid},
+        auth=MetaverseAuth(os.environ.get('HIFI_META_USERNAME'),
+                           os.environ.get('HIFI_META_PASSWORD'))
     )
     logger.debug("created request")
 
