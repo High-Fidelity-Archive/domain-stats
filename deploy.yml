@@ -15,13 +15,23 @@ spec:
     spec:
       containers:
       - name: domain-stats-pusher
-        image: highfidelity/domain-stats:5
+        image: highfidelity/domain-stats:6
         env:
           - name: HIFI_DS_WEB_SESSION_UUID
             valueFrom:
               secretKeyRef:
                 name: domainpushersecret
                 key: dswebsessionuuid
+          - name: HIFI_META_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: domainpushersecret
+                key: hifimetausername
+          - name: HIFI_META_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: domainpushersecret
+                key: hifimetapassword
           - name: HIFI_SLEEP_INTERVAL
             value: '3'
           - name: HIFI_DOMAIN_NAME
